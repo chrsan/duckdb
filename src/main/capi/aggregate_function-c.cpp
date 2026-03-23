@@ -110,6 +110,28 @@ void CAPIAggregateUpdate(Vector inputs[], AggregateInputData &aggr_input_data, i
 	}
 }
 
+void CAPIAggregateSimpleUpdate(Vector inputs[], AggregateInputData &aggr_input_data, idx_t input_count,
+                               data_ptr_t state, idx_t count) {
+	DataChunk chunk;
+	for (idx_t c = 0; c < input_count; c++) {
+		inputs[c].Flatten(count);
+		chunk.data.emplace_back(inputs[c]);
+	}
+	chunk.SetCardinality(count);
+
+	auto &bind_data = aggr_input_data.bind_data->Cast<CAggregateFunctionBindData>();
+	// Create a vector of count state items.
+	vector<duckdb_aggregate_state> state_data(count, reinterpret_cast<duckdb_aggregate_state>(state));
+	auto c_input_chunk = reinterpret_cast<duckdb_data_chunk>(&chunk);
+
+	CAggregateExecuteInfo exec_info(bind_data.info);
+	auto c_function_info = reinterpret_cast<duckdb_function_info>(&exec_info);
+	bind_data.info.update(c_function_info, c_input_chunk, state_data.data());
+	if (!exec_info.success) {
+		throw InvalidInputException(exec_info.error);
+	}
+}
+
 void CAPIAggregateCombine(Vector &state, Vector &combined, AggregateInputData &aggr_input_data, idx_t count) {
 	state.Flatten(count);
 	auto &bind_data = aggr_input_data.bind_data->Cast<CAggregateFunctionBindData>();
@@ -151,8 +173,8 @@ using duckdb::GetCAggregateFunction;
 duckdb_aggregate_function duckdb_create_aggregate_function() {
 	auto function = new duckdb::AggregateFunction("", {}, duckdb::LogicalType::INVALID, duckdb::CAPIAggregateStateSize,
 	                                              duckdb::CAPIAggregateStateInit, duckdb::CAPIAggregateUpdate,
-	                                              duckdb::CAPIAggregateCombine, duckdb::CAPIAggregateFinalize, nullptr,
-	                                              duckdb::CAPIAggregateBind);
+	                                              duckdb::CAPIAggregateCombine, duckdb::CAPIAggregateFinalize,
+	                                              duckdb::CAPIAggregateSimpleUpdate, duckdb::CAPIAggregateBind);
 	try {
 		function->function_info = duckdb::make_shared_ptr<duckdb::CAggregateFunctionInfo>();
 		return reinterpret_cast<duckdb_aggregate_function>(function);
